@@ -2,180 +2,194 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Repro: Accessibility scan crash on malformed IDs (TE-12888)</title>
+  <title>Repro: Accessibility scan crash on malformed IDs (TE-12888) — iframe variants</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1000px; margin: 24px auto; padding: 0 16px; color: #222; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #ddd; padding-bottom: 4px; font-size: 1.05rem; }
+    iframe { width: 100%; height: 220px; border: 1px solid #ccc; margin: 8px 0; }
+    code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+  </style>
 </head>
 <body>
-  <h1>Repro — accessibility scanner crash on IDs / aria-labelledby with spaces</h1>
-  <p>Customer's faulty-id finder script returned matches for both <code>[id*=" "]</code> AND <code>[aria-labelledby*=" "]</code>. This page exercises both, plus several axe rule paths that traverse element references.</p>
+  <h1>Repro — malformed IDs inside iframes (top frame stays clean)</h1>
+  <p>The customer's diagnostic showed the crash on the <em>main frame</em> with <code>scanIframesEnabled: false</code>. That suggests axe is encountering the malformed-id elements while traversing the main document — likely via same-origin iframes whose <code>contentDocument</code> axe still walks even with <code>iframes: false</code>.</p>
+  <p>This page puts <strong>no</strong> malformed IDs in the top frame. They live exclusively in iframes (same-origin via <code>srcdoc</code>, mimicking what Module Federation / Equifax UAT does).</p>
 
   <!-- ============================================================
-       1. The literal customer ID — every variant of how axe might
-          reach it
+       1. srcdoc same-origin iframe with the literal customer ID
        ============================================================ -->
-  <h2>1. Literal customer ID — multiple referrers</h2>
-
-  <button aria-labelledby="Due TodaySection 2 Receipt Update">A</button>
-  <button aria-describedby="Due TodaySection 2 Receipt Update">B</button>
-  <button aria-controls="Due TodaySection 2 Receipt Update">C</button>
-  <button aria-owns="Due TodaySection 2 Receipt Update">D</button>
-  <label for="Due TodaySection 2 Receipt Update">Linked label</label>
-  <input id="Due TodaySection 2 Receipt Update" type="text" />
+  <h2>1. srcdoc iframe — literal customer ID + multiple referrers</h2>
+  <iframe srcdoc='
+    <button aria-labelledby="Due TodaySection 2 Receipt Update">A</button>
+    <button aria-describedby="Due TodaySection 2 Receipt Update">B</button>
+    <button aria-controls="Due TodaySection 2 Receipt Update">C</button>
+    <button aria-owns="Due TodaySection 2 Receipt Update">D</button>
+    <label for="Due TodaySection 2 Receipt Update">label</label>
+    <input id="Due TodaySection 2 Receipt Update" type="text" />
+    <div id="Due TodaySection 2 Receipt Update">duplicate</div>
+    <div id="Due TodaySection 2 Receipt Update">duplicate again</div>
+  '></iframe>
 
   <!-- ============================================================
-       2. Duplicate IDs — triggers axe's duplicate-id-* rule paths
-          which call root.querySelectorAll with the id
+       2. srcdoc iframe — duplicate-id rule path
        ============================================================ -->
-  <h2>2. Duplicate of the same malformed ID (triggers duplicate-id rule)</h2>
-
-  <div id="Due TodaySection 2 Receipt Update">duplicate #1</div>
-  <div id="Due TodaySection 2 Receipt Update">duplicate #2</div>
-  <div id="Due TodaySection 2 Receipt Update">duplicate #3</div>
+  <h2>2. srcdoc iframe — duplicate-id-active triggers</h2>
+  <iframe srcdoc='
+    <input id="Pending I-9 Section 1" type="text" />
+    <input id="Pending I-9 Section 1" type="text" />
+    <button id="Pending I-9 Section 1">btn</button>
+  '></iframe>
 
   <!-- ============================================================
-       3. Form control with focusable widget + malformed id +
-          aria-describedby pointing to another malformed id
+       3. srcdoc iframe — combobox with aria-owns/aria-controls
+          (axe 22785 path: root.querySelectorAll([aria-owns~="<id>"]...)
+          where id is unescaped)
        ============================================================ -->
-  <h2>3. Focusable form widgets with malformed-id refs</h2>
-
-  <form>
-    <label for="Pending I-9 Section 1">Pending I-9 Section 1</label>
-    <input id="Pending I-9 Section 1" type="text" aria-describedby="Help 2 Tip Block" />
-    <span id="Help 2 Tip Block">Help text for the field above.</span>
-
-    <select id="Section 2 Upload I-9 Documents" aria-labelledby="Pending I-9 Section 1 Help 2 Tip Block">
-      <option>Choose</option>
-    </select>
-
-    <fieldset>
-      <legend id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</legend>
-      <input type="radio" name="q" id="2024 Quarterly Onboarding Yes" />
-      <label for="2024 Quarterly Onboarding Yes">Yes</label>
-    </fieldset>
-  </form>
+  <h2>3. srcdoc iframe — combobox + aria-owns / aria-controls / activedescendant</h2>
+  <iframe srcdoc='
+    <div role="combobox"
+         aria-owns="E-Verify Duplicate Cases"
+         aria-controls="E-Verify Duplicate Cases"
+         aria-activedescendant="E-Verify Duplicate Cases Item 1">
+      <input type="text" />
+    </div>
+    <ul id="E-Verify Duplicate Cases" role="listbox">
+      <li id="E-Verify Duplicate Cases Item 1" role="option">Item 1</li>
+      <li id="E-Verify Duplicate Cases Item 2" role="option">Item 2</li>
+    </ul>
+  '></iframe>
 
   <!-- ============================================================
-       4. Combobox / listbox / activedescendant — Path 22785 in axe
+       4. srcdoc iframe — img usemap
        ============================================================ -->
-  <h2>4. Combobox + aria-owns / aria-controls + activedescendant</h2>
-
-  <div role="combobox" aria-owns="E-Verify Duplicate Cases" aria-controls="E-Verify Duplicate Cases" aria-activedescendant="E-Verify Duplicate Cases Item 1">
-    <input id="combo-input" type="text" aria-labelledby="E-Verify Duplicate Cases" />
-  </div>
-  <ul id="E-Verify Duplicate Cases" role="listbox">
-    <li id="E-Verify Duplicate Cases Item 1" role="option">Item 1</li>
-    <li id="E-Verify Duplicate Cases Item 2" role="option">Item 2</li>
-    <li id="E-Verify Duplicate Cases Item 3" role="option">Item 3</li>
-  </ul>
+  <h2>4. srcdoc iframe — img usemap referencing malformed map id</h2>
+  <iframe srcdoc='
+    <map name="Map 2 Region Hotspots">
+      <area shape="rect" coords="0,0,10,10" alt="x" />
+    </map>
+    <img src="https://via.placeholder.com/100" usemap="#Map 2 Region Hotspots" alt="map demo" />
+  '></iframe>
 
   <!-- ============================================================
-       5. Tabs widget (role=tablist) — exercises aria-controls path
+       5. srcdoc iframe — table headers
        ============================================================ -->
-  <h2>5. Tabs widget with malformed-id panels</h2>
-
-  <div role="tablist">
-    <button role="tab" aria-controls="Onboarding Packet Sent" aria-selected="true">Sent</button>
-    <button role="tab" aria-controls="I-9 Anywhere" aria-selected="false">Anywhere</button>
-    <button role="tab" aria-controls="Pending I-9: Virtual" aria-selected="false">Virtual</button>
-  </div>
-  <div id="Onboarding Packet Sent" role="tabpanel">Onboarding Packet Sent panel.</div>
-  <div id="I-9 Anywhere" role="tabpanel">I-9 Anywhere panel.</div>
-  <div id="Pending I-9: Virtual" role="tabpanel">Pending I-9: Virtual panel.</div>
+  <h2>5. srcdoc iframe — table cell <code>headers</code> referencing malformed th IDs</h2>
+  <iframe srcdoc='
+    <table>
+      <thead>
+        <tr>
+          <th id="Onboarding Packet Sent">A</th>
+          <th id="I-9 Anywhere">B</th>
+          <th id="Section 2 Upload I-9 Documents">C</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td headers="Onboarding Packet Sent">a</td>
+          <td headers="I-9 Anywhere">b</td>
+          <td headers="Section 2 Upload I-9 Documents">c</td>
+        </tr>
+      </tbody>
+    </table>
+  '></iframe>
 
   <!-- ============================================================
-       6. Table with td headers="..." — separate axe rule
+       6. srcdoc iframe — landmarks + aria-labelledby on sections
        ============================================================ -->
-  <h2>6. Table with td headers referencing malformed IDs</h2>
-
-  <table>
-    <thead>
-      <tr>
-        <th id="Onboarding Packet Sent">Onboarding Packet Sent</th>
-        <th id="I-9 Anywhere">I-9 Anywhere</th>
-        <th id="Section 2 Upload I-9 Documents">Section 2 Upload I-9 Documents</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td headers="Onboarding Packet Sent">A</td>
-        <td headers="I-9 Anywhere">B</td>
-        <td headers="Section 2 Upload I-9 Documents">C</td>
-      </tr>
-    </tbody>
-  </table>
+  <h2>6. srcdoc iframe — landmarks / sections with malformed-id labels</h2>
+  <iframe srcdoc='
+    <main>
+      <section aria-labelledby="Pending I-9 Section 1">
+        <h3 id="Pending I-9 Section 1">Pending I-9 Section 1</h3>
+        <p>Body.</p>
+      </section>
+      <section aria-labelledby="2024 Quarterly Onboarding">
+        <h3 id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</h3>
+      </section>
+    </main>
+  '></iframe>
 
   <!-- ============================================================
-       7. Nested shadow DOM (matches `shadow_roots_found: 1`)
+       7. srcdoc iframe — a real form widget with malformed-id
+       and aria-describedby/labelledby pointing to other malformed ids
        ============================================================ -->
-  <h2>7. Shadow DOM containing malformed-id elements</h2>
+  <h2>7. srcdoc iframe — focusable form widgets (axe runs different rules on these)</h2>
+  <iframe srcdoc='
+    <form>
+      <label for="Pending I-9 Section 1">Pending I-9 Section 1</label>
+      <input id="Pending I-9 Section 1"
+             type="text"
+             aria-describedby="Help 2 Tip Block" />
+      <span id="Help 2 Tip Block">Help text.</span>
 
-  <div id="shadow-host"></div>
+      <select id="Section 2 Upload I-9 Documents"
+              aria-labelledby="Pending I-9 Section 1 Help 2 Tip Block">
+        <option>Choose</option>
+      </select>
+
+      <fieldset>
+        <legend id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</legend>
+        <input type="radio" name="q" id="2024 Quarterly Onboarding Yes" />
+        <label for="2024 Quarterly Onboarding Yes">Yes</label>
+      </fieldset>
+    </form>
+  '></iframe>
+
+  <!-- ============================================================
+       8. dynamically-created blank iframe + DOM injection
+       ============================================================ -->
+  <h2>8. Dynamically created same-origin iframe (about:blank, scripted)</h2>
+  <iframe id="dyn-iframe"></iframe>
   <script>
-    const host = document.getElementById('shadow-host');
-    const shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `
-      <button aria-labelledby="Shadow 2 Section Item">btn</button>
-      <button aria-describedby="Shadow 2 Section Item">btn 2</button>
-      <button aria-controls="Shadow 2 Section Item">btn 3</button>
-      <input id="Shadow 2 Section Item" type="text" />
-      <input id="Shadow 2 Section Item" type="text" />
-      <label for="Shadow 2 Section Item">Inside shadow</label>
-      <div role="combobox" aria-owns="Shadow 2 Section Item" aria-controls="Shadow 2 Section Item"></div>
-    `;
+    const dyn = document.getElementById('dyn-iframe');
+    dyn.addEventListener('load', () => {
+      const d = dyn.contentDocument;
+      if (!d) return;
+      d.body.innerHTML = `
+        <button aria-labelledby="Due TodaySection 2 Receipt Update">A</button>
+        <input id="Due TodaySection 2 Receipt Update" type="text" />
+        <div id="Due TodaySection 2 Receipt Update">duplicate</div>
+        <div id="Due TodaySection 2 Receipt Update">duplicate again</div>
+      `;
+    });
+    // Triggers the load event
+    dyn.src = 'about:blank';
   </script>
 
   <!-- ============================================================
-       8. img usemap="#..." — triggers axe rule at line 11388 / 16605
+       9. nested srcdoc iframe (iframe inside an iframe)
        ============================================================ -->
-  <h2>8. img usemap referencing malformed map id</h2>
-
-  <map name="Map 2 Region Hotspots">
-    <area shape="rect" coords="0,0,10,10" alt="x" />
-  </map>
-  <img src="https://via.placeholder.com/100" usemap="#Map 2 Region Hotspots" alt="map demo" />
+  <h2>9. Nested srcdoc iframe (deeper traversal)</h2>
+  <iframe srcdoc='
+    <iframe srcdoc=&apos;
+      <input id="Due TodaySection 2 Receipt Update" type="text" />
+      <button aria-labelledby="Due TodaySection 2 Receipt Update">btn</button>
+    &apos;></iframe>
+  '></iframe>
 
   <!-- ============================================================
-       9. Heading hierarchy + landmarks with malformed-id refs
-       ============================================================ -->
-  <h2>9. Landmarks / sections with malformed-id refs</h2>
-
-  <main>
-    <section aria-labelledby="Pending I-9 Section 1">
-      <h3 id="Pending I-9 Section 1">Pending I-9 Section 1</h3>
-      <p>Body.</p>
-    </section>
-    <section aria-labelledby="2024 Quarterly Onboarding">
-      <h3 id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</h3>
-    </section>
-  </main>
-
-  <!-- ============================================================
-       10. Real accessibility violations (so once the crash is gone,
-           axe has work)
-       ============================================================ -->
-  <h2>10. Real accessibility violations (post-crash baseline)</h2>
-
-  <img src="https://via.placeholder.com/100" />
-  <input type="text" />
-  <p style="color: #ccc; background: #fff;">Low contrast.</p>
-  <button></button>
-
-  <!-- ============================================================
-       Diagnostic helpers
+       Diagnostic helpers (top-level helpers — don't pollute frames)
        ============================================================ -->
   <h2>Diagnostic helpers</h2>
 
-  <pre><code>// Customer's faulty-id finder
-document.querySelectorAll('[id*=" "], [aria-labelledby*=" "]').forEach(el =&gt; {
-  console.log({
-    id: el.id,
-    ariaLabelledby: el.getAttribute('aria-labelledby'),
-    element: el
+  <pre><code>// Customer's faulty-id finder, ALSO scanning into accessible iframes
+const findFaulty = (root) =&gt; {
+  root.querySelectorAll('[id*=" "], [aria-labelledby*=" "]').forEach(el =&gt; {
+    console.log({
+      doc: root === document ? 'top' : 'iframe:' + root.location.href,
+      id: el.id,
+      ariaLabelledby: el.getAttribute('aria-labelledby'),
+      element: el
+    });
   });
+};
+findFaulty(document);
+[...document.querySelectorAll('iframe')].forEach(f =&gt; {
+  try { findFaulty(f.contentDocument); } catch (e) {}
 });</code></pre>
 
-  <pre><code>// Reproduce raw browser crash without axe
-document.body.querySelectorAll('#Due TodaySection 2 Receipt Update');
-// SyntaxError: Failed to execute 'querySelectorAll' on 'Element':
-//   '#Due TodaySection 2 Receipt Update' is not a valid selector.</code></pre>
+  <pre><code>// Direct browser-level reproduction (no axe involved)
+document.body.querySelectorAll('#Due TodaySection 2 Receipt Update');</code></pre>
+
 </body>
 </html>
