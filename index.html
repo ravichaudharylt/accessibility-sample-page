@@ -1,195 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Repro: Accessibility scan crash on malformed IDs (TE-12888) — iframe variants</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repro: Accessibility scan crash on malformed IDs</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1000px; margin: 24px auto; padding: 0 16px; color: #222; }
-    h2 { margin-top: 28px; border-bottom: 1px solid #ddd; padding-bottom: 4px; font-size: 1.05rem; }
-    iframe { width: 100%; height: 220px; border: 1px solid #ccc; margin: 8px 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #222; }
+    .info { background: #fff3cd; padding: 12px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #ffc107; }
+    .crash-path { background: #f8d7da; padding: 12px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #f5c6cb; }
     code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
   </style>
 </head>
 <body>
-  <h1>Repro — malformed IDs inside iframes (top frame stays clean)</h1>
-  <p>The customer's diagnostic showed the crash on the <em>main frame</em> with <code>scanIframesEnabled: false</code>. That suggests axe is encountering the malformed-id elements while traversing the main document — likely via same-origin iframes whose <code>contentDocument</code> axe still walks even with <code>iframes: false</code>.</p>
-  <p>This page puts <strong>no</strong> malformed IDs in the top frame. They live exclusively in iframes (same-origin via <code>srcdoc</code>, mimicking what Module Federation / Equifax UAT does).</p>
+  <h1>Repro — unique-selector crash on malformed element IDs</h1>
 
-  <!-- ============================================================
-       1. srcdoc same-origin iframe with the literal customer ID
-       ============================================================ -->
-  <h2>1. srcdoc iframe — literal customer ID + multiple referrers</h2>
-  <iframe srcdoc='
-    <button aria-labelledby="Due TodaySection 2 Receipt Update">A</button>
-    <button aria-describedby="Due TodaySection 2 Receipt Update">B</button>
-    <button aria-controls="Due TodaySection 2 Receipt Update">C</button>
-    <button aria-owns="Due TodaySection 2 Receipt Update">D</button>
-    <label for="Due TodaySection 2 Receipt Update">label</label>
-    <input id="Due TodaySection 2 Receipt Update" type="text" />
-    <div id="Due TodaySection 2 Receipt Update">duplicate</div>
-    <div id="Due TodaySection 2 Receipt Update">duplicate again</div>
-  '></iframe>
+  <div class="info">
+    <strong>How to reproduce:</strong>
+    <ol>
+      <li>Enable <strong>AI accessibility scan</strong> in the extension settings (feature flag <code>accessibility_ai_issues</code>)</li>
+      <li>Open this page in Chrome with the LambdaTest Accessibility extension loaded</li>
+      <li>Run a <strong>full-page scan</strong></li>
+      <li>Scan will fail with: <code>Failed to execute 'querySelectorAll' on 'Element': '#Due TodaySection 2 Receipt Update' is not a valid selector.</code></li>
+    </ol>
+  </div>
 
-  <!-- ============================================================
-       2. srcdoc iframe — duplicate-id rule path
-       ============================================================ -->
-  <h2>2. srcdoc iframe — duplicate-id-active triggers</h2>
-  <iframe srcdoc='
-    <input id="Pending I-9 Section 1" type="text" />
-    <input id="Pending I-9 Section 1" type="text" />
-    <button id="Pending I-9 Section 1">btn</button>
-  '></iframe>
+  <div class="crash-path">
+    <strong>Crash path:</strong><br>
+    <code>capturePageData()</code> &rarr; <code>extractElements()</code> walks DOM with TreeWalker &rarr;
+    finds img/link/svg elements &rarr; calls <code>unique(node)</code> from <code>unique-selector</code> library &rarr;
+    <code>unique()</code> walks parent chain via <code>getParents(el)</code> &rarr;
+    hits ancestor with <code>id="Due TodaySection 2 Receipt Update"</code> &rarr;
+    <code>getID()</code> returns <code>#Due TodaySection 2 Receipt Update</code> (only escapes IDs starting with digits or containing <code>:</code>, not spaces) &rarr;
+    <code>testUniqueness()</code> calls <code>parentNode.querySelectorAll('#Due TodaySection 2 Receipt Update')</code> &rarr;
+    <strong>throws DOMException</strong> &rarr; bubbles through <code>Promise.all</code> into catch block &rarr; <code>SCAN_RUN_FAILED</code>
+  </div>
 
-  <!-- ============================================================
-       3. srcdoc iframe — combobox with aria-owns/aria-controls
-          (axe 22785 path: root.querySelectorAll([aria-owns~="<id>"]...)
-          where id is unescaped)
-       ============================================================ -->
-  <h2>3. srcdoc iframe — combobox + aria-owns / aria-controls / activedescendant</h2>
-  <iframe srcdoc='
-    <div role="combobox"
-         aria-owns="E-Verify Duplicate Cases"
-         aria-controls="E-Verify Duplicate Cases"
-         aria-activedescendant="E-Verify Duplicate Cases Item 1">
-      <input type="text" />
-    </div>
-    <ul id="E-Verify Duplicate Cases" role="listbox">
-      <li id="E-Verify Duplicate Cases Item 1" role="option">Item 1</li>
-      <li id="E-Verify Duplicate Cases Item 2" role="option">Item 2</li>
-    </ul>
-  '></iframe>
+  <!-- Ancestor has invalid ID (spaces), children are scannable element types.
+       extractElements() only processes: EMBEDDED_IMAGE, ACCESSIBLE_LINK,
+       ACCESSIBLE_IMAGE, DECORATIVE_ELEMENT. When unique() is called on these
+       children and walks the parent chain, it crashes on the ancestor's ID. -->
 
-  <!-- ============================================================
-       4. srcdoc iframe — img usemap
-       ============================================================ -->
-  <h2>4. srcdoc iframe — img usemap referencing malformed map id</h2>
-  <iframe srcdoc='
-    <map name="Map 2 Region Hotspots">
-      <area shape="rect" coords="0,0,10,10" alt="x" />
-    </map>
-    <img src="https://via.placeholder.com/100" usemap="#Map 2 Region Hotspots" alt="map demo" />
-  '></iframe>
+  <h2>1. Exact ID from user error log — contains img + link children</h2>
+  <div id="Due TodaySection 2 Receipt Update">
+    <h3>Due Today - Section 2 Receipt Update</h3>
+    <p>This div's ID matches the exact error from the user's diagnostic log.</p>
+    <img src="https://via.placeholder.com/200x100" alt="Receipt preview" />
+    <a href="https://example.com">View receipt details</a>
+    <button>Mark Complete</button>
+  </div>
 
-  <!-- ============================================================
-       5. srcdoc iframe — table headers
-       ============================================================ -->
-  <h2>5. srcdoc iframe — table cell <code>headers</code> referencing malformed th IDs</h2>
-  <iframe srcdoc='
-    <table>
-      <thead>
-        <tr>
-          <th id="Onboarding Packet Sent">A</th>
-          <th id="I-9 Anywhere">B</th>
-          <th id="Section 2 Upload I-9 Documents">C</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td headers="Onboarding Packet Sent">a</td>
-          <td headers="I-9 Anywhere">b</td>
-          <td headers="Section 2 Upload I-9 Documents">c</td>
-        </tr>
-      </tbody>
-    </table>
-  '></iframe>
+  <h2>2. ID with parentheses and spaces — contains img + link children</h2>
+  <div id="Task List (Active Items)">
+    <h3>Active Tasks</h3>
+    <img src="https://via.placeholder.com/200x100" alt="Task icon" />
+    <a href="https://example.com">Open task</a>
+  </div>
 
-  <!-- ============================================================
-       6. srcdoc iframe — landmarks + aria-labelledby on sections
-       ============================================================ -->
-  <h2>6. srcdoc iframe — landmarks / sections with malformed-id labels</h2>
-  <iframe srcdoc='
-    <main>
-      <section aria-labelledby="Pending I-9 Section 1">
-        <h3 id="Pending I-9 Section 1">Pending I-9 Section 1</h3>
-        <p>Body.</p>
-      </section>
-      <section aria-labelledby="2024 Quarterly Onboarding">
-        <h3 id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</h3>
-      </section>
-    </main>
-  '></iframe>
+  <h2>3. ID with spaces — contains SVG child</h2>
+  <div id="Pending Review Section 3">
+    <h3>Pending Review</h3>
+    <svg width="24" height="24" role="img" aria-label="Status icon"><circle cx="12" cy="12" r="10" fill="green"/></svg>
+  </div>
 
-  <!-- ============================================================
-       7. srcdoc iframe — a real form widget with malformed-id
-       and aria-describedby/labelledby pointing to other malformed ids
-       ============================================================ -->
-  <h2>7. srcdoc iframe — focusable form widgets (axe runs different rules on these)</h2>
-  <iframe srcdoc='
-    <form>
-      <label for="Pending I-9 Section 1">Pending I-9 Section 1</label>
-      <input id="Pending I-9 Section 1"
-             type="text"
-             aria-describedby="Help 2 Tip Block" />
-      <span id="Help 2 Tip Block">Help text.</span>
-
-      <select id="Section 2 Upload I-9 Documents"
-              aria-labelledby="Pending I-9 Section 1 Help 2 Tip Block">
-        <option>Choose</option>
-      </select>
-
-      <fieldset>
-        <legend id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</legend>
-        <input type="radio" name="q" id="2024 Quarterly Onboarding Yes" />
-        <label for="2024 Quarterly Onboarding Yes">Yes</label>
-      </fieldset>
-    </form>
-  '></iframe>
-
-  <!-- ============================================================
-       8. dynamically-created blank iframe + DOM injection
-       ============================================================ -->
-  <h2>8. Dynamically created same-origin iframe (about:blank, scripted)</h2>
-  <iframe id="dyn-iframe"></iframe>
+  <!-- Shadow root to match the diagnostic log (shadow_roots_found: 1) -->
+  <div id="portal-widget"></div>
   <script>
-    const dyn = document.getElementById('dyn-iframe');
-    dyn.addEventListener('load', () => {
-      const d = dyn.contentDocument;
-      if (!d) return;
-      d.body.innerHTML = `
-        <button aria-labelledby="Due TodaySection 2 Receipt Update">A</button>
-        <input id="Due TodaySection 2 Receipt Update" type="text" />
-        <div id="Due TodaySection 2 Receipt Update">duplicate</div>
-        <div id="Due TodaySection 2 Receipt Update">duplicate again</div>
-      `;
-    });
-    // Triggers the load event
-    dyn.src = 'about:blank';
+    const host = document.getElementById('portal-widget');
+    host.attachShadow({ mode: 'open' }).innerHTML = '<p>Shadow content</p>';
   </script>
 
-  <!-- ============================================================
-       9. nested srcdoc iframe (iframe inside an iframe)
-       ============================================================ -->
-  <h2>9. Nested srcdoc iframe (deeper traversal)</h2>
-  <iframe srcdoc='
-    <iframe srcdoc=&apos;
-      <input id="Due TodaySection 2 Receipt Update" type="text" />
-      <button aria-labelledby="Due TodaySection 2 Receipt Update">btn</button>
-    &apos;></iframe>
-  '></iframe>
-
-  <!-- ============================================================
-       Diagnostic helpers (top-level helpers — don't pollute frames)
-       ============================================================ -->
-  <h2>Diagnostic helpers</h2>
-
-  <pre><code>// Customer's faulty-id finder, ALSO scanning into accessible iframes
-const findFaulty = (root) =&gt; {
-  root.querySelectorAll('[id*=" "], [aria-labelledby*=" "]').forEach(el =&gt; {
-    console.log({
-      doc: root === document ? 'top' : 'iframe:' + root.location.href,
-      id: el.id,
-      ariaLabelledby: el.getAttribute('aria-labelledby'),
-      element: el
-    });
-  });
-};
-findFaulty(document);
-[...document.querySelectorAll('iframe')].forEach(f =&gt; {
-  try { findFaulty(f.contentDocument); } catch (e) {}
-});</code></pre>
-
-  <pre><code>// Direct browser-level reproduction (no axe involved)
-document.body.querySelectorAll('#Due TodaySection 2 Receipt Update');</code></pre>
-
+  <h2>Notes</h2>
+  <ul>
+    <li>The crash does <strong>not</strong> come from axe-core — axe v4.11.0 correctly escapes IDs with <code>CSS.escape()</code>.</li>
+    <li>The crash comes from the <code>unique-selector</code> npm package used in <code>extractPageData.js</code>.</li>
+    <li><code>capturePageData</code> runs whenever the <code>accessibility_ai_issues</code> feature flag is enabled — the capture screenshot setting has no effect.</li>
+    <li>Elements with invalid IDs <strong>must be in the light DOM</strong> (not shadow DOM) for the TreeWalker to reach them.</li>
+    <li>The invalid-ID element itself doesn't need to be a scannable type — it just needs to be an <strong>ancestor</strong> of an img, link, or SVG.</li>
+  </ul>
 </body>
 </html>
