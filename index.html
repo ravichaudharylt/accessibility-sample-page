@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Repro: Accessibility scan crash on malformed IDs (TE-12888)</title>
+</head>
+<body>
+  <h1>Repro — accessibility scanner crash on IDs / aria-labelledby with spaces</h1>
+  <p>Customer's faulty-id finder script returned matches for both <code>[id*=" "]</code> AND <code>[aria-labelledby*=" "]</code>. This page exercises both, plus several axe rule paths that traverse element references.</p>
+
+  <!-- ============================================================
+       1. The literal customer ID — every variant of how axe might
+          reach it
+       ============================================================ -->
+  <h2>1. Literal customer ID — multiple referrers</h2>
+
+  <button aria-labelledby="Due TodaySection 2 Receipt Update">A</button>
+  <button aria-describedby="Due TodaySection 2 Receipt Update">B</button>
+  <button aria-controls="Due TodaySection 2 Receipt Update">C</button>
+  <button aria-owns="Due TodaySection 2 Receipt Update">D</button>
+  <label for="Due TodaySection 2 Receipt Update">Linked label</label>
+  <input id="Due TodaySection 2 Receipt Update" type="text" />
+
+  <!-- ============================================================
+       2. Duplicate IDs — triggers axe's duplicate-id-* rule paths
+          which call root.querySelectorAll with the id
+       ============================================================ -->
+  <h2>2. Duplicate of the same malformed ID (triggers duplicate-id rule)</h2>
+
+  <div id="Due TodaySection 2 Receipt Update">duplicate #1</div>
+  <div id="Due TodaySection 2 Receipt Update">duplicate #2</div>
+  <div id="Due TodaySection 2 Receipt Update">duplicate #3</div>
+
+  <!-- ============================================================
+       3. Form control with focusable widget + malformed id +
+          aria-describedby pointing to another malformed id
+       ============================================================ -->
+  <h2>3. Focusable form widgets with malformed-id refs</h2>
+
+  <form>
+    <label for="Pending I-9 Section 1">Pending I-9 Section 1</label>
+    <input id="Pending I-9 Section 1" type="text" aria-describedby="Help 2 Tip Block" />
+    <span id="Help 2 Tip Block">Help text for the field above.</span>
+
+    <select id="Section 2 Upload I-9 Documents" aria-labelledby="Pending I-9 Section 1 Help 2 Tip Block">
+      <option>Choose</option>
+    </select>
+
+    <fieldset>
+      <legend id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</legend>
+      <input type="radio" name="q" id="2024 Quarterly Onboarding Yes" />
+      <label for="2024 Quarterly Onboarding Yes">Yes</label>
+    </fieldset>
+  </form>
+
+  <!-- ============================================================
+       4. Combobox / listbox / activedescendant — Path 22785 in axe
+       ============================================================ -->
+  <h2>4. Combobox + aria-owns / aria-controls + activedescendant</h2>
+
+  <div role="combobox" aria-owns="E-Verify Duplicate Cases" aria-controls="E-Verify Duplicate Cases" aria-activedescendant="E-Verify Duplicate Cases Item 1">
+    <input id="combo-input" type="text" aria-labelledby="E-Verify Duplicate Cases" />
+  </div>
+  <ul id="E-Verify Duplicate Cases" role="listbox">
+    <li id="E-Verify Duplicate Cases Item 1" role="option">Item 1</li>
+    <li id="E-Verify Duplicate Cases Item 2" role="option">Item 2</li>
+    <li id="E-Verify Duplicate Cases Item 3" role="option">Item 3</li>
+  </ul>
+
+  <!-- ============================================================
+       5. Tabs widget (role=tablist) — exercises aria-controls path
+       ============================================================ -->
+  <h2>5. Tabs widget with malformed-id panels</h2>
+
+  <div role="tablist">
+    <button role="tab" aria-controls="Onboarding Packet Sent" aria-selected="true">Sent</button>
+    <button role="tab" aria-controls="I-9 Anywhere" aria-selected="false">Anywhere</button>
+    <button role="tab" aria-controls="Pending I-9: Virtual" aria-selected="false">Virtual</button>
+  </div>
+  <div id="Onboarding Packet Sent" role="tabpanel">Onboarding Packet Sent panel.</div>
+  <div id="I-9 Anywhere" role="tabpanel">I-9 Anywhere panel.</div>
+  <div id="Pending I-9: Virtual" role="tabpanel">Pending I-9: Virtual panel.</div>
+
+  <!-- ============================================================
+       6. Table with td headers="..." — separate axe rule
+       ============================================================ -->
+  <h2>6. Table with td headers referencing malformed IDs</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th id="Onboarding Packet Sent">Onboarding Packet Sent</th>
+        <th id="I-9 Anywhere">I-9 Anywhere</th>
+        <th id="Section 2 Upload I-9 Documents">Section 2 Upload I-9 Documents</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td headers="Onboarding Packet Sent">A</td>
+        <td headers="I-9 Anywhere">B</td>
+        <td headers="Section 2 Upload I-9 Documents">C</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ============================================================
+       7. Nested shadow DOM (matches `shadow_roots_found: 1`)
+       ============================================================ -->
+  <h2>7. Shadow DOM containing malformed-id elements</h2>
+
+  <div id="shadow-host"></div>
+  <script>
+    const host = document.getElementById('shadow-host');
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <button aria-labelledby="Shadow 2 Section Item">btn</button>
+      <button aria-describedby="Shadow 2 Section Item">btn 2</button>
+      <button aria-controls="Shadow 2 Section Item">btn 3</button>
+      <input id="Shadow 2 Section Item" type="text" />
+      <input id="Shadow 2 Section Item" type="text" />
+      <label for="Shadow 2 Section Item">Inside shadow</label>
+      <div role="combobox" aria-owns="Shadow 2 Section Item" aria-controls="Shadow 2 Section Item"></div>
+    `;
+  </script>
+
+  <!-- ============================================================
+       8. img usemap="#..." — triggers axe rule at line 11388 / 16605
+       ============================================================ -->
+  <h2>8. img usemap referencing malformed map id</h2>
+
+  <map name="Map 2 Region Hotspots">
+    <area shape="rect" coords="0,0,10,10" alt="x" />
+  </map>
+  <img src="https://via.placeholder.com/100" usemap="#Map 2 Region Hotspots" alt="map demo" />
+
+  <!-- ============================================================
+       9. Heading hierarchy + landmarks with malformed-id refs
+       ============================================================ -->
+  <h2>9. Landmarks / sections with malformed-id refs</h2>
+
+  <main>
+    <section aria-labelledby="Pending I-9 Section 1">
+      <h3 id="Pending I-9 Section 1">Pending I-9 Section 1</h3>
+      <p>Body.</p>
+    </section>
+    <section aria-labelledby="2024 Quarterly Onboarding">
+      <h3 id="2024 Quarterly Onboarding">2024 Quarterly Onboarding</h3>
+    </section>
+  </main>
+
+  <!-- ============================================================
+       10. Real accessibility violations (so once the crash is gone,
+           axe has work)
+       ============================================================ -->
+  <h2>10. Real accessibility violations (post-crash baseline)</h2>
+
+  <img src="https://via.placeholder.com/100" />
+  <input type="text" />
+  <p style="color: #ccc; background: #fff;">Low contrast.</p>
+  <button></button>
+
+  <!-- ============================================================
+       Diagnostic helpers
+       ============================================================ -->
+  <h2>Diagnostic helpers</h2>
+
+  <pre><code>// Customer's faulty-id finder
+document.querySelectorAll('[id*=" "], [aria-labelledby*=" "]').forEach(el =&gt; {
+  console.log({
+    id: el.id,
+    ariaLabelledby: el.getAttribute('aria-labelledby'),
+    element: el
+  });
+});</code></pre>
+
+  <pre><code>// Reproduce raw browser crash without axe
+document.body.querySelectorAll('#Due TodaySection 2 Receipt Update');
+// SyntaxError: Failed to execute 'querySelectorAll' on 'Element':
+//   '#Due TodaySection 2 Receipt Update' is not a valid selector.</code></pre>
+</body>
+</html>
